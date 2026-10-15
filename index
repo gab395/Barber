@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vértice Barber Club</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{ink:'#07090d',coal:'#0f1319',steel:'#171c25',line:'#262d3a',azure:'#3d7bff',mist:'#9aa4b5'},fontFamily:{sans:['Sora','system-ui','sans-serif']}}}}
+</script>
+<style type="text/tailwindcss">
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:dark}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 4rem);scroll-behavior:smooth}
+body{@apply bg-ink text-slate-200 font-sans antialiased}
+@layer components{
+.btn{@apply inline-flex items-center justify-center rounded-md bg-azure px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-azure}
+.btn2{@apply inline-flex items-center justify-center rounded-md border border-line px-5 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-azure focus-visible:outline focus-visible:outline-2 focus-visible:outline-azure}
+.inp{@apply w-full rounded-md border border-line bg-coal px-3 py-2.5 text-sm text-white placeholder-mist focus:border-azure focus:outline-none}
+.opt{@apply w-full rounded-lg border border-line bg-coal p-4 text-left transition hover:border-azure}
+.opt.on{@apply border-azure bg-steel}
+.tbl th{@apply px-3 py-2 text-left text-xs font-semibold text-mist}
+.tbl td{@apply border-t border-line px-3 py-3 text-sm}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div id="app"><div class="grid min-h-screen place-items-center"><p class="animate-pulse text-mist">Carregando Vértice...</p></div></div>
+<div id="toast" class="fixed bottom-6 left-1/2 z-[60] hidden -translate-x-1/2 rounded-md bg-steel px-4 py-2 text-sm shadow-lg ring-1 ring-line"></div>
+<script>
+/* ============ CONFIG & SUPABASE ============ */
+const CFG={name:'Vértice Barber Club',unit:'Matriz',businessId:'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',currency:'BRL',step:30};
+/* A URL termina em .supabase.co, sem /rest/v1/ (o SDK acrescenta isso sozinho). */
+const SUPABASE_URL='https://bqohfcxfgiqfydsevhvv.supabase.co'; 
+const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJxb2hmY3hmZ2lxZnlkc2V2aHZ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE1MzQwNDIsImV4cCI6MjEwNzExMDA0Mn0.VboWYHQPzCEgzjJvMZaMEOAGwbwB4XFd0zsKohAAoTM';
+if(!window.supabase){document.getElementById('app').innerHTML='<p class="p-8 text-red-400">Não foi possível carregar o SDK do Supabase. Verifique sua conexão e recarregue.</p>';throw new Error('SDK do Supabase ausente')}
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+let loadErr='';
+
+let store={services:[],barbers:[],hours:{0:null,1:[540,1140],2:[540,1140],3:[540,1140],4:[540,1140],5:[540,1200],6:[540,960]},appts:[]};
+let session=null;
+function ymd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+const STATUS_IN={confirmed:'agendado',pending:'agendado',completed:'concluído'};
+const STATUS_OUT={'agendado':'confirmed','concluído':'completed','cancelado':'cancelled'};
+
+async function loadData(){
+ try{
+  const {data:{session:s}}=await sb.auth.getSession();
+  /* Visitante (anon) só pede colunas de horário, sem dados de clientes */
+  const apptCols=s?'*, customers(name, phone)':'id, barber_id, service_id, start_at, end_at, status';
+  const [sv,br,ap]=await Promise.all([
+   sb.from('services').select('*').eq('business_id',CFG.businessId).order('name'),
+   sb.from('barbers').select('*').eq('business_id',CFG.businessId).order('name'),
+   sb.from('appointments').select(apptCols).eq('business_id',CFG.businessId)]);
+  const fe=sv.error||br.error||ap.error;loadErr=fe?(fe.message||String(fe)):'';if(fe)console.error('Supabase:',fe);
+  if(sv.data)store.services=sv.data.map(x=>({id:x.id,name:x.name,desc:x.description||'',price:Number(x.price),min:x.duration_minutes,active:x.is_active}));
+  if(br.data)store.barbers=br.data.map(x=>({id:x.id,name:x.name,role:'Especialista',spec:x.bio||'Profissional Vértice',active:x.is_active}));
+  if(ap.data)store.appts=ap.data.map(a=>{
+   const st=new Date(a.start_at),en=new Date(a.end_at);
+   return{id:a.id,date:ymd(st),start:st.getHours()*60+st.getMinutes(),min:Math.round((en-st)/60000)||30,svc:a.service_id,barber:a.barber_id,
+    name:a.customers?.name||'Cliente',phone:a.customers?.phone||'',status:STATUS_IN[a.status]||'cancelado'}})
+ }catch(err){loadErr=String(err);console.error('Erro ao sincronizar:',err);toast('Não foi possível carregar os dados.')}}
+
+/* ============ UTILITÁRIOS ============ */
+const $=s=>document.querySelector(s);
+const E=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const eur=n=>Number(n).toLocaleString('pt-BR',{style:'currency',currency:CFG.currency});
+const waNum=p=>{const d=String(p||'').replace(/\D/g,'');return d.length<=11?'55'+d:d};
+const hm=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const svcOf=id=>store.services.find(s=>s.id==id)||{name:'—',min:30};
+const barOf=id=>store.barbers.find(b=>b.id==id)||{name:'—'};
+const dLabel=s=>new Date(s+'T00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'});
+function toast(t){const e=$('#toast');e.textContent=t;e.classList.remove('hidden');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.add('hidden'),2600)}
+function slots(barberId,date,svc){
+ const h=store.hours[new Date(date+'T00:00').getDay()];if(!h||!svc)return[];
+ const now=new Date(),isToday=date===ymd(now),nowM=now.getHours()*60+now.getMinutes();
+ const busy=store.appts.filter(a=>a.barber==barberId&&a.date===date&&a.status!=='cancelado');
+ const out=[];
+ for(let t=h[0];t+svc.min<=h[1];t+=CFG.step){
+  if(isToday&&t<=nowM)continue;
+  if(busy.some(a=>t<a.start+a.min&&a.start<t+svc.min))continue;
+  out.push(t)}
+ return out}
+
+/* ============ SITE PÚBLICO ============ */
+const LOGO=s=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 4h5l5 10 5-10h5L12 22z" fill="#3d7bff"/></svg>`;
+function pub(){
+ const sv=store.services.filter(s=>s.active),bs=store.barbers.filter(b=>b.active);
+ $('#app').innerHTML=`
+ <header class="sticky top-0 z-40 border-b border-line bg-ink/90 backdrop-blur" style="top:env(safe-area-inset-top,0px)"><div class="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
+  <a href="#/" class="flex items-center gap-2 font-extrabold tracking-tight">${LOGO(22)}Vértice</a>
+  <nav class="hidden gap-6 text-sm text-mist sm:flex"><a class="hover:text-white" href="#servicos">Serviços</a><a class="hover:text-white" href="#equipe">Equipe</a><a class="hover:text-white" href="#/admin">Área da equipe</a></nav>
+  <button class="btn" onclick="openBook()">Agendar horário</button></div></header>
+ ${loadErr?`<div class="border-b border-red-900 bg-red-950/60 px-5 py-3 text-sm text-red-200">Não foi possível ler os dados do Supabase: ${E(loadErr)}. Confira a URL do projeto, a chave e as políticas de RLS.</div>`:''}
+ <section class="relative overflow-hidden border-b border-line">
+  <svg class="pointer-events-none absolute -right-24 -top-10 h-[520px] w-[520px] text-azure/10" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 4h5l5 10 5-10h5L12 22z" fill="currentColor"/></svg>
+  <div class="relative mx-auto max-w-6xl px-5 py-24 sm:py-32"><p class="mb-4 text-sm text-azure">${CFG.name} · ${CFG.unit}</p>
+   <h1 class="max-w-3xl text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">Todo corte tem um ponto de precisão.</h1>
+   <p class="mt-6 max-w-xl text-mist">Uma barbearia pensada ao detalhe: ambiente sóbrio, mestres no ofício e agenda sem filas. Escolha o serviço, o barbeiro e o horário em menos de um minuto.</p>
+   <div class="mt-9 flex flex-wrap gap-3"><button class="btn" onclick="openBook()">Agendar agora</button><a class="btn2" href="#servicos">Ver serviços</a></div>
+   <dl class="mt-14 grid max-w-lg grid-cols-3 gap-6 border-t border-line pt-6 text-sm"><div><dt class="text-mist">Atendimento</dt><dd class="mt-1 font-semibold">Seg a Sáb</dd></div><div><dt class="text-mist">Horário</dt><dd class="mt-1 font-semibold">09:00 – 19:00</dd></div><div><dt class="text-mist">Agendamento</dt><dd class="mt-1 font-semibold">Sem cadastro</dd></div></dl></div></section>
+ <section id="servicos" class="mx-auto max-w-6xl px-5 py-20"><h2 class="text-3xl font-extrabold tracking-tight">Serviços</h2><p class="mt-2 text-mist">Preços fechados, duração indicada.</p>
+  <div class="mt-8 divide-y divide-line border-y border-line">${sv.map(s=>`<div class="grid items-center gap-3 py-5 sm:grid-cols-[1fr_auto_auto]"><div><h3 class="font-semibold">${E(s.name)}</h3><p class="mt-1 max-w-xl text-sm text-mist">${E(s.desc)}</p></div>
+   <div class="text-sm text-mist sm:text-right">${s.min} min<br><span class="text-base font-semibold text-white">${eur(s.price)}</span></div><button class="btn2" onclick="openBook('${s.id}')">Escolher</button></div>`).join('')||'<p class="py-6 text-mist">Sem serviços disponíveis no momento.</p>'}</div></section>
+ <section id="equipe" class="border-y border-line bg-coal"><div class="mx-auto max-w-6xl px-5 py-20"><h2 class="text-3xl font-extrabold tracking-tight">Equipe</h2>
+  <div class="mt-8 grid gap-5 sm:grid-cols-2">${bs.map(b=>`<article class="flex gap-4 rounded-lg border border-line bg-ink p-5"><div class="grid h-16 w-16 shrink-0 place-items-center rounded-md bg-steel text-xl font-extrabold text-azure">${E(b.name.split(' ').map(x=>x[0]).join('').slice(0,2))}</div>
+   <div><h3 class="font-semibold">${E(b.name)}</h3><p class="text-sm text-azure">${E(b.role)}</p><p class="mt-2 text-sm text-mist">${E(b.spec)}</p></div></article>`).join('')}</div></div></section>
+ <footer class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-8 text-sm text-mist"><span>© ${new Date().getFullYear()} ${CFG.name}</span><a class="hover:text-white" href="#/admin">Área da equipe</a></footer><div id="modal"></div>`}
+
+/* Wizard de agendamento */
+let B={};
+function openBook(svc){B={step:svc?2:1,svc:svc||null,barber:null,date:null,time:null,name:'',phone:'',done:false};bk()}
+function closeBook(){$('#modal').innerHTML=''}
+function setB(k,v,go){B[k]=v;if(k==='barber'||k==='date')B.time=null;if(go)B.step=go;bk()}
+function bk(){
+ const titles=['Serviço','Barbeiro','Data e hora','Seus dados'],svc=store.services.find(s=>s.id===B.svc);let body='';
+ if(B.done){body=`<div class="py-6 text-center"><div class="mx-auto grid h-14 w-14 place-items-center rounded-full bg-azure/15 text-azure"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 13l4 4L19 7"/></svg></div>
+  <h3 class="mt-4 text-xl font-extrabold">Agendamento confirmado</h3><p class="mt-2 text-sm text-mist">${E(svc.name)} com ${E(barOf(B.barber).name)}<br>${dLabel(B.date)} às ${hm(B.time)}</p>
+  <p class="mt-3 text-sm text-mist">Entraremos em contato pelo ${E(B.phone)} se houver alguma alteração.</p><button class="btn mt-6" onclick="closeBook()">Fechar</button></div>`}
+ else if(B.step===1){body=store.services.filter(s=>s.active).map(s=>`<button class="opt mb-3 ${B.svc===s.id?'on':''}" onclick="setB('svc','${s.id}',2)"><div class="flex justify-between gap-3"><b>${E(s.name)}</b><b>${eur(s.price)}</b></div><p class="mt-1 text-sm text-mist">${s.min} min · ${E(s.desc)}</p></button>`).join('')}
+ else if(B.step===2){body=store.barbers.filter(b=>b.active).map(b=>`<button class="opt mb-3 ${B.barber===b.id?'on':''}" onclick="setB('barber','${b.id}',3)"><b>${E(b.name)}</b><p class="mt-1 text-sm text-mist">${E(b.spec)}</p></button>`).join('')}
+ else if(B.step===3){
+  const days=[];for(let i=0;i<14;i++){const d=new Date();d.setDate(d.getDate()+i);if(store.hours[d.getDay()])days.push(ymd(d))}
+  if(!B.date||!days.includes(B.date))B.date=days.find(d=>slots(B.barber,d,svc).length)||days[0];
+  const sl=slots(B.barber,B.date,svc);
+  body=`<div class="-mx-1 flex gap-2 overflow-x-auto pb-3">${days.map(d=>`<button class="shrink-0 rounded-md border px-3 py-2 text-sm ${d===B.date?'border-azure bg-steel':'border-line bg-coal'}" onclick="setB('date','${d}')">${dLabel(d)}</button>`).join('')}</div>
+  <p class="mb-2 mt-2 text-sm text-mist">Horários livres com ${E(barOf(B.barber).name)}</p>
+  ${sl.length?`<div class="grid grid-cols-4 gap-2">${sl.map(t=>`<button class="rounded-md border px-2 py-2 text-sm ${B.time===t?'border-azure bg-azure text-white':'border-line bg-coal hover:border-azure'}" onclick="setB('time',${t})">${hm(t)}</button>`).join('')}</div>`:'<p class="rounded-md border border-line bg-coal p-4 text-sm text-mist">Sem horários neste dia. Tente outra data ou outro barbeiro.</p>'}
+  <button class="btn mt-5 w-full" ${B.time==null?'disabled':''} onclick="setB('step',0,4)">Continuar</button>`}
+ else{body=`<div class="mb-4 rounded-md border border-line bg-coal p-3 text-sm"><b>${E(svc.name)}</b> · ${eur(svc.price)}<br><span class="text-mist">${E(barOf(B.barber).name)} · ${dLabel(B.date)} às ${hm(B.time)}</span></div>
+  <label class="mb-1 block text-sm text-mist" for="nm">Nome</label><input id="nm" class="inp mb-3" autocomplete="name" value="${E(B.name)}" placeholder="Seu nome">
+  <label class="mb-1 block text-sm text-mist" for="ph">Celular / WhatsApp</label><input id="ph" class="inp" type="tel" autocomplete="tel" value="${E(B.phone)}" placeholder="(11) 9XXXX-XXXX">
+  <p id="err" class="mt-2 hidden text-sm text-red-400"></p><button id="cf" class="btn mt-5 w-full" onclick="confirmBook()">Confirmar agendamento</button>`}
+ $('#modal').innerHTML=`<div class="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center" onclick="if(event.target===this)closeBook()" role="dialog" aria-modal="true"><div class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-line bg-ink p-5 sm:rounded-2xl">
+  <div class="mb-4 flex items-center justify-between"><div>${B.done?'':`<p class="text-xs text-mist">Passo ${B.step} de 4</p><h2 class="text-lg font-extrabold">${titles[B.step-1]}</h2>`}</div><button class="text-mist hover:text-white" aria-label="Fechar" onclick="closeBook()">✕</button></div>
+  ${B.done?'':`<div class="mb-5 h-1 rounded bg-line"><div class="h-1 rounded bg-azure transition-all" style="width:${B.step*25}%"></div></div>`}${body}
+  ${!B.done&&B.step>1?`<button class="mt-4 text-sm text-mist hover:text-white" onclick="setB('step',0,${B.step-1})">← Voltar</button>`:''}</div></div>`}
+
+async function confirmBook(){
+ B.name=$('#nm').value.trim();B.phone=$('#ph').value.trim();
+ const err=m=>{const e=$('#err');e.textContent=m;e.classList.remove('hidden')},btn=$('#cf');
+ if(B.name.length<2)return err('Informe seu nome.');
+ if(B.phone.replace(/\D/g,'').length<10)return err('Informe um celular válido, com DDD.');
+ btn.disabled=true;
+ await loadData(); /* revalida a disponibilidade logo antes de gravar */
+ const svc=svcOf(B.svc);
+ if(!slots(B.barber,B.date,svc).includes(B.time)){B.step=3;B.time=null;bk();return toast('Esse horário acabou de ser ocupado. Escolha outro.')}
+ try{
+  /* id gerado no cliente: evita precisar de permissão de SELECT para o visitante */
+  const customerId=crypto.randomUUID();
+  const c=await sb.from('customers').insert({id:customerId,business_id:CFG.businessId,name:B.name,phone:B.phone});
+  if(c.error)throw c.error;
+  const start=new Date(B.date+'T'+hm(B.time)+':00'),end=new Date(start.getTime()+svc.min*60000);
+  const a=await sb.from('appointments').insert({business_id:CFG.businessId,customer_id:customerId,barber_id:B.barber,service_id:B.svc,start_at:start.toISOString(),end_at:end.toISOString(),status:'confirmed'});
+  if(a.error)throw a.error;
+  B.done=true;bk();loadData();
+ }catch(ex){console.error(ex);btn.disabled=false;err('Não foi possível gravar o agendamento. Tente novamente.')}}
+
+/* ============ PAINEL ADMIN ============ */
+let tab='dashboard';
+async function adm(){
+ const {data:{session:s}}=await sb.auth.getSession();session=s;
+ if(!session){
+  $('#app').innerHTML=`<main class="grid min-h-screen place-items-center px-5"><form class="w-full max-w-sm rounded-xl border border-line bg-coal p-7" onsubmit="login(event)">
+   <a href="#/" class="mb-6 flex items-center gap-2 font-extrabold">${LOGO(20)}Vértice</a><h1 class="text-xl font-extrabold">Entrar no painel</h1><p class="mb-5 mt-1 text-sm text-mist">Acesso para proprietários e barbeiros.</p>
+   <label class="mb-1 block text-sm text-mist" for="em">E-mail</label><input id="em" class="inp mb-3" type="email" required autocomplete="username" placeholder="seu@email.com">
+   <label class="mb-1 block text-sm text-mist" for="pw">Senha</label><input id="pw" class="inp" type="password" required autocomplete="current-password" placeholder="••••••••">
+   <p id="lerr" class="mt-2 hidden text-sm text-red-400">E-mail ou senha incorretos.</p><button class="btn mt-5 w-full">Entrar</button></form></main>`;return}
+ await loadData();
+ const today=ymd(new Date()),all=store.appts.slice().sort((a,b)=>(a.date+String(a.start).padStart(4,'0')).localeCompare(b.date+String(b.start).padStart(4,'0')));
+ const hoje=all.filter(a=>a.date===today&&a.status!=='cancelado');
+ const tabs=[['dashboard','Visão geral'],['agenda','Agenda'],['servicos','Serviços'],['equipe','Equipe']];let v='';
+ if(tab==='dashboard'){
+  const card=(l,n,s)=>`<div class="rounded-xl border border-line bg-coal p-5"><p class="text-sm text-mist">${l}</p><p class="mt-2 text-4xl font-extrabold">${n}</p><p class="mt-1 text-xs text-mist">${s}</p></div>`;
+  v=`<div class="grid gap-4 sm:grid-cols-3">${card('Agendamentos hoje',hoje.length,hoje.filter(a=>a.status==='concluído').length+' concluídos')}${card('Serviços ativos',store.services.filter(s=>s.active).length,'de '+store.services.length+' cadastrados')}${card('Equipe',store.barbers.filter(b=>b.active).length,'barbeiros ativos')}</div>
+  <h2 class="mb-3 mt-8 font-semibold">Próximos atendimentos</h2>${apptTable(all.filter(a=>a.date>=today&&a.status==='agendado').slice(0,5),false)}`}
+ else if(tab==='agenda'){v=`<div class="mb-4 flex items-center justify-between"><h2 class="font-semibold">Todos os agendamentos</h2><span class="text-xs text-mist">Atualiza em tempo real</span></div>${apptTable(all.filter(a=>a.date>=today||a.status==='agendado'),true)}`}
+ else if(tab==='servicos'){v=`<div class="overflow-x-auto rounded-lg border border-line"><table class="tbl w-full"><thead><tr><th>Serviço</th><th>Duração</th><th>Preço</th><th>Ativo</th></tr></thead><tbody>${store.services.map(s=>`<tr><td><b>${E(s.name)}</b></td><td>${s.min} min</td>
+  <td><input class="inp !w-24" type="number" min="0" step="1" value="${s.price}" onchange="updService('${s.id}',Number(this.value))" aria-label="Preço"></td><td>${tog('services',s.id,s.active)}</td></tr>`).join('')}</tbody></table></div>`}
+ else{v=`<div class="overflow-x-auto rounded-lg border border-line"><table class="tbl w-full"><thead><tr><th>Barbeiro</th><th>Função</th><th>Especialidade</th><th>Ativo</th></tr></thead><tbody>${store.barbers.map(b=>`<tr><td><b>${E(b.name)}</b></td><td>${E(b.role)}</td><td class="text-mist">${E(b.spec)}</td><td>${tog('barbers',b.id,b.active)}</td></tr>`).join('')}</tbody></table></div>`}
+ $('#app').innerHTML=`<div class="mx-auto max-w-6xl px-5 py-6"><header class="mb-6 flex flex-wrap items-center justify-between gap-3"><div class="flex items-center gap-2 font-extrabold">${LOGO(20)}Vértice · Painel</div>
+  <div class="flex gap-2"><a class="btn2" href="#/">Ver site</a><button class="btn2" onclick="logout()">Sair</button></div></header>
+  <nav class="mb-6 flex gap-1 overflow-x-auto border-b border-line">${tabs.map(([k,l])=>`<button class="shrink-0 border-b-2 px-4 py-2.5 text-sm font-semibold ${tab===k?'border-azure text-white':'border-transparent text-mist hover:text-white'}" onclick="tab='${k}';adm()">${l}</button>`).join('')}</nav>${v}</div>`}
+
+function apptTable(list,edit){
+ if(!list.length)return '<p class="rounded-lg border border-line bg-coal p-6 text-sm text-mist">Sem agendamentos no momento.</p>';
+ const cls={agendado:'text-azure',concluído:'text-emerald-400',cancelado:'text-red-400'};
+ return `<div class="overflow-x-auto rounded-lg border border-line"><table class="tbl w-full min-w-[640px]"><thead><tr><th>Data</th><th>Hora</th><th>Cliente</th><th>Serviço</th><th>Barbeiro</th><th>Status</th></tr></thead><tbody>${list.map(a=>`<tr>
+ <td>${dLabel(a.date)}</td><td>${hm(a.start)}</td><td><b>${E(a.name)}</b><br><a class="text-xs text-mist hover:text-white" href="https://wa.me/${waNum(a.phone)}" target="_blank" rel="noopener">${E(a.phone)}</a></td><td>${E(svcOf(a.svc).name)}</td><td>${E(barOf(a.barber).name)}</td>
+ <td>${edit?`<select class="inp !w-auto !py-1.5" onchange="updApptStatus('${a.id}',this.value)" aria-label="Status">${['agendado','concluído','cancelado'].map(s=>`<option ${s===a.status?'selected':''}>${s}</option>`).join('')}</select>`:`<span class="${cls[a.status]}">${a.status}</span>`}</td></tr>`).join('')}</tbody></table></div>`}
+const tog=(t,id,on)=>`<button role="switch" aria-checked="${on}" aria-label="Ativo" class="relative h-6 w-11 rounded-full transition ${on?'bg-azure':'bg-line'}" onclick="toggleActive('${t}','${id}',${!on})"><span class="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${on?'left-[22px]':'left-0.5'}"></span></button>`;
+async function save(q,ok){const {error}=await q;if(error){console.error(error);toast('Erro ao salvar. Verifique as permissões (RLS).')}else toast(ok);adm()}
+const updService=(id,price)=>save(sb.from('services').update({price}).eq('id',id),'Preço salvo');
+const updApptStatus=(id,pt)=>save(sb.from('appointments').update({status:STATUS_OUT[pt]||'confirmed'}).eq('id',id),'Status atualizado');
+const toggleActive=(t,id,is_active)=>save(sb.from(t).update({is_active}).eq('id',id),'Atualizado');
+async function login(e){e.preventDefault();
+ const {error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});
+ if(error)$('#lerr').classList.remove('hidden');else adm()}
+async function logout(){await sb.auth.signOut();location.hash='#/admin';adm()}
+
+/* ============ ROTAS ============ */
+async function route(){
+ if(location.hash.startsWith('#/admin'))return adm();
+ await loadData();
+ const m=$('#modal');if(!m||!m.innerHTML.trim()||B.done)pub()}
+/* Âncoras internas (#servicos, #equipe) só rolam a página: não recarregam a rota */
+window.addEventListener('hashchange',()=>{const h=location.hash;if(h&&!h.startsWith('#/'))return;window.scrollTo(0,0);route()});
+/* Tempo real: o painel se atualiza quando a tabela de agendamentos muda (ative Realtime na tabela) */
+sb.channel('appts').on('postgres_changes',{event:'*',schema:'public',table:'appointments'},()=>{
+ if(location.hash.startsWith('#/admin')&&session&&(tab==='dashboard'||tab==='agenda'))adm()}).subscribe();
+route();
+</script>
+</body>
+</html>
